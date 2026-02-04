@@ -425,7 +425,7 @@ router.post('/test-message', async (req, res) => {
     const {
       sendPushNotification,
       sendFcmNotification,
-      sendApnsNotification,
+      sendApnsNotificationWithReport,
     } = require('../utils/pushNotifications');
 
     const expoTokens = (user.pushTokens || []).map(pt => pt.token);
@@ -452,17 +452,12 @@ router.post('/test-message', async (req, res) => {
     const results = {
       expo: { sent: 0, tokens: expoTokens.length },
       fcm: { sent: 0, tokens: fcmTokens.length },
-      apns: { sent: 0, tokens: apnsTokens.length },
+      apns: { sent: 0, tokens: apnsTokens.length, report: null },
     };
 
-    if (expoTokens.length > 0) {
-      try {
-        await sendPushNotification(expoTokens, payload);
-        results.expo.sent = expoTokens.length;
-      } catch (error) {
-        console.error('Error sending Expo test message push:', error);
-      }
-    }
+    // IMPORTANT:
+    // - If APNs device tokens exist, prefer APNs over Expo for iOS reliability
+    // - Expo push for iOS requires Expo project APNs credentials; if missing it will always fail.
     if (fcmTokens.length > 0) {
       try {
         await sendFcmNotification(fcmTokens, payload);
@@ -473,10 +468,27 @@ router.post('/test-message', async (req, res) => {
     }
     if (apnsTokens.length > 0) {
       try {
-        await sendApnsNotification(apnsTokens, payload);
-        results.apns.sent = apnsTokens.length;
+        const report = await sendApnsNotificationWithReport(apnsTokens, payload);
+        results.apns.sent = report?.sent || 0;
+        results.apns.report = {
+          configured: report?.configured,
+          bundleId: report?.bundleId,
+          production: report?.production,
+          sent: report?.sent,
+          failed: report?.failed,
+          // Return only distinct reasons (no device tokens)
+          failureReasons: Array.from(new Set((report?.failures || []).map((f) => String(f?.reason || 'unknown')))),
+        };
       } catch (error) {
         console.error('Error sending APNs test message push:', error);
+      }
+    }
+    if (apnsTokens.length === 0 && expoTokens.length > 0) {
+      try {
+        await sendPushNotification(expoTokens, payload);
+        results.expo.sent = expoTokens.length;
+      } catch (error) {
+        console.error('Error sending Expo test message push:', error);
       }
     }
 

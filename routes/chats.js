@@ -674,9 +674,10 @@ router.post('/:chatId/messages', auth, async (req, res) => {
             },
           };
 
-          if (expoTokens.length) {
-            await sendPushNotification(expoTokens, payload);
-          }
+          // Prefer native tokens to avoid Expo APNs credential dependency.
+          // - Android: FCM
+          // - iOS: APNs
+          // Only fall back to Expo if no native tokens exist at all.
           if (fcmTokens.length) {
             const invalidTokens = await sendFcmNotification(fcmTokens, payload);
             if (invalidTokens && invalidTokens.length > 0) {
@@ -694,6 +695,9 @@ router.post('/:chatId/messages', auth, async (req, res) => {
                 { $pull: { apnsTokens: { token: { $in: invalidTokens } } } }
               );
             }
+          }
+          if (!fcmTokens.length && !apnsTokens.length && expoTokens.length) {
+            await sendPushNotification(expoTokens, payload);
           }
         } catch (pushError) {
           console.error('Error sending push notification:', pushError);

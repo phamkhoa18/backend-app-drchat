@@ -104,6 +104,63 @@ const sendApnsNotification = async (tokens, payload) => {
   }
 };
 
+// Like sendApnsNotification but returns a structured report (for debugging/test endpoints).
+const sendApnsNotificationWithReport = async (tokens, payload) => {
+  const provider = getApnProvider();
+  const bundleId = process.env.APNS_BUNDLE_ID || process.env.APNS_VOIP_BUNDLE_ID;
+
+  const report = {
+    configured: !!provider && !!bundleId,
+    bundleId: bundleId || null,
+    production: process.env.APNS_PRODUCTION === 'true',
+    sent: 0,
+    failed: 0,
+    invalidTokens: [],
+    failures: [],
+  };
+
+  if (!provider || !tokens?.length || !bundleId) {
+    return report;
+  }
+
+  try {
+    const notification = new apn.Notification();
+    notification.topic = bundleId;
+    notification.pushType = 'alert';
+    notification.priority = 10;
+    notification.expiry = Math.floor(Date.now() / 1000) + 60;
+    notification.alert = {
+      title: payload.title,
+      body: payload.body,
+    };
+    notification.sound = payload.sound || 'default';
+    notification.payload = payload.data || {};
+
+    const result = await provider.send(notification, tokens);
+    report.sent = result?.sent?.length || 0;
+    report.failed = result?.failed?.length || 0;
+
+    if (Array.isArray(result?.failed)) {
+      result.failed.forEach((failure) => {
+        const reason = failure?.response?.reason || failure?.error?.reason || failure?.error || 'unknown';
+        report.failures.push({
+          reason,
+          status: failure?.status || failure?.response?.status || null,
+        });
+        if (reason === 'BadDeviceToken' || reason === 'Unregistered') {
+          report.invalidTokens.push(failure.device);
+        }
+      });
+    }
+
+    return report;
+  } catch (error) {
+    report.failed = tokens?.length || 0;
+    report.failures.push({ reason: error?.message || 'error', status: null });
+    return report;
+  }
+};
+
 const sendFcmNotification = async (tokens, payload) => {
   const messaging = getFirebaseMessaging();
   if (!messaging || !tokens?.length) return [];
@@ -353,9 +410,10 @@ async function sendCallNotification(user, callerName, chatId, callerId, callType
   const expoTokens = (user.pushTokens || []).map(pt => pt.token);
   const fcmTokens = (user.fcmTokens || []).map(pt => pt.token);
   const apnsVoipTokens = (user.apnsVoipTokens || []).map(pt => pt.token);
+  const apnsTokens = (user.apnsTokens || []).map(pt => pt.token);
   const callUuid = crypto.randomUUID();
 
-  console.log(`📞 [CALL] Sending call push notification (Expo:${expoTokens.length}, FCM:${fcmTokens.length}, VoIP:${apnsVoipTokens.length})`);
+  console.log(`📞 [CALL] Sending call push notification (Expo:${expoTokens.length}, FCM:${fcmTokens.length}, VoIP:${apnsVoipTokens.length}, APNs:${apnsTokens.length})`);
   console.log(`📞 [CALL] Caller: ${callerName}, Type: ${callTypeText}, ChatId: ${chatId}`);
   console.log(`📞 [CALL] VoIP tokens:`, apnsVoipTokens);
 
@@ -383,6 +441,13 @@ async function sendCallNotification(user, callerName, chatId, callerId, callType
     console.log(`📱 [CALL] Sending VoIP push to ${apnsVoipTokens.length} device(s)`);
     console.log(`📱 [CALL] VoIP payload:`, JSON.stringify(payload.data, null, 2));
     await sendApnsVoipNotification(apnsVoipTokens, { data: payload.data });
+    return;
+  }
+  // If iOS doesn't have VoIP tokens yet, fallback to regular APNs alert so user still sees something.
+  // This WILL NOT wake CallKit when app is killed, but it prevents silent missed calls.
+  if (apnsTokens.length) {
+    console.log(`📱 [CALL] No VoIP token. Sending APNs alert fallback to ${apnsTokens.length} device(s)`);
+    await sendApnsNotification(apnsTokens, payload);
     return;
   }
   if (fcmTokens.length) {
@@ -477,6 +542,7 @@ module.exports = {
   sendGroupCallNotification,
   sendCallEndNotification,
   sendApnsNotification,
+  sendApnsNotificationWithReport,
   sendApnsVoipNotification,
   sendFcmNotification,
   getApnProvider,
