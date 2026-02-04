@@ -62,8 +62,10 @@ router.post('/upload', auth, (req, res, next) => {
       // Handle multer errors
       if (err instanceof multer.MulterError) {
         if (err.code === 'LIMIT_FILE_SIZE') {
-          return res.status(400).json({ 
+          // Use 413 to match common reverse proxy semantics
+          return res.status(413).json({ 
             message: 'File too large. Maximum size is 200MB',
+            maxSizeMB: 200,
             error: err.message 
           });
         }
