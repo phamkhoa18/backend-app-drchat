@@ -81,6 +81,7 @@ app.use('/api/groups', require('./routes/groups'));
 app.use('/api/files', require('./routes/files'));
 app.use('/api/push', require('./routes/push'));
 app.use('/api/stream', require('./routes/stream'));
+app.use('/api/webrtc', require('./routes/webrtc'));
 
 // Public route for group join links (redirect to app)
 app.get('/g/:code', async (req, res) => {
